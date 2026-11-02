@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Butterfly Finder</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="logo-icon" aria-hidden>
+            <!-- magnifying glass icon -->
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M21 21l-4.35-4.35" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+        </div>
+        <h1>Butterfly Finder</h1>
+    </header>
+
+    <div class="page">
+        <!-- Left predictions column -->
+        <aside class="left">
+            <div class="pred-heading">Predictions</div>
+            <ul id="predictions" class="pred-list"></ul>
+            <div class="small-metrics" id="metrics">No image uploaded.</div>
+        </aside>
+
+        <!-- Right upload/predict column -->
+        <main class="right">
+            <div id="dropzone" class="dropzone">
+                <div class="drop-cta">Drop an image here</div>
+                <div class="drop-sub">or click to choose a file — JPG/PNG</div>
+                <input id="fileInput" type="file" accept="image/*" style="display:none">
+                <img id="preview" alt="preview" style="display:none" />
+            </div>
+
+            <div class="controls">
+                <button id="predictBtn" class="btn" disabled>Predict</button>
+                <button id="clearBtn" class="btn secondary">Clear</button>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const PREDICT_URL = '/predict';
+
+        const fileInput = document.getElementById('fileInput');
+        const dropzone = document.getElementById('dropzone');
+        const preview = document.getElementById('preview');
+        const predictBtn = document.getElementById('predictBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const predictionsList = document.getElementById('predictions');
+        const metrics = document.getElementById('metrics');
+
+        let currentFile = null;
+
+        function setPreviewFromFile(file) {
+            currentFile = file;
+            const reader = new FileReader();
+            reader.onload = e => {
+                preview.src = e.target.result;
+                preview.style.display = 'block';
+                predictBtn.disabled = false;
+                metrics.textContent = `Ready to predict: ${file.name} (${Math.round(file.size / 1024)} KB)`;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // click to open file picker
+        dropzone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', e => {
+            if (e.target.files && e.target.files[0]) setPreviewFromFile(e.target.files[0]);
+        });
+
+        // drag/drop
+        dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('hover') });
+        dropzone.addEventListener('dragleave', e => { e.preventDefault(); dropzone.classList.remove('hover') });
+        dropzone.addEventListener('drop', e => {
+            e.preventDefault();
+            dropzone.classList.remove('hover');
+            const f = e.dataTransfer.files && e.dataTransfer.files[0];
+            if (f) setPreviewFromFile(f);
+        });
+
+        clearBtn.addEventListener('click', () => {
+            currentFile = null;
+            preview.src = '';
+            preview.style.display = 'none';
+            fileInput.value = '';
+            predictBtn.disabled = true;
+            predictionsList.innerHTML = '';
+            metrics.textContent = 'No image uploaded.';
+        });
+
+        predictBtn.addEventListener('click', async () => {
+            if (!currentFile) return;
+            predictBtn.disabled = true;
+            predictBtn.textContent = 'Predicting...';
+            predictionsList.innerHTML = '';
+            metrics.textContent = 'Contacting model...';
+
+            try {
+                const fd = new FormData();
+                fd.append('file', currentFile);
+
+                const res = await fetch(PREDICT_URL, { method: 'POST', body: fd });
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    throw new Error(`Server error: ${res.status} - ${errorText}`);
+                }
+
+                const data = await res.json();
+
+                // Convert your backend response to the format the frontend expects
+                let predictions = [];
+
+                if (data.topk) {
+                    // If backend returns topk array
+                    predictions = data.topk.map(item => ({
+                        name: item.class,
+                        prob: item.probability
+                    }));
+                } else if (data.predictions) {
+                    // If backend returns predictions array
+                    predictions = data.predictions;
+                } else if (data.predicted_class) {
+                    // If backend returns single prediction
+                    predictions = [{
+                        name: data.predicted_class,
+                        prob: data.probability
+                    }];
+                }
+
+                renderPredictions(predictions);
+                metrics.textContent = 'Prediction complete';
+            } catch (err) {
+                metrics.textContent = 'Prediction failed: ' + err.message;
+            } finally {
+                predictBtn.disabled = false;
+                predictBtn.textContent = 'Predict';
+            }
+        });
+
+        function renderPredictions(list) {
+            if (!list.length) {
+                predictionsList.innerHTML = '<li class="pred-item">No predictions returned.</li>';
+                return;
+            }
+            predictionsList.innerHTML = '';
+            list.slice(0, 12).forEach((p, idx) => {
+                const li = document.createElement('li');
+                li.className = 'pred-item';
+                li.innerHTML = `
+              <div class="pred-rank" style="background:rgba(255,255,255,${0.06 + 0.06 * (12 - idx)})"></div>
+              <div class="pred-name">${escapeHtml(p.name)}</div>
+              <div style="width:120px">
+                <div class="pred-prob">${Math.round((p.prob || 0) * 100)}%</div>
+                <div class="bar-wrap"><div class="bar-fill" style="width:${(p.prob || 0) * 100}%"></div></div>
+              </div>
+            `;
+                predictionsList.appendChild(li);
+            });
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>\\"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));
+        }
+    </script>
+</body>
+</html>
