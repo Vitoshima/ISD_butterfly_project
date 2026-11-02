@@ -1,3 +1,12 @@
+## 📸 Screenshots
+
+
+### Homepage
+![Homepage](screenshots/homepage.png)
+
+### Prediction Result
+![Prediction Result](screenshots/prediction-result.png)
+
 Quick Start
 
 Prerequisites
